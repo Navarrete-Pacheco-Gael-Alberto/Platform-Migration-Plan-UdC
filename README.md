@@ -126,12 +126,6 @@ flowchart TB
     vip -.-> v1 & v2 & v3
 ```
 
-> **[IMAGEN: `kubectl get nodes -o wide -L store.lab/host-pc`]** mostrando los 3 nodos `Ready`,
-> sus IPs y en qué computadora está cada uno.
-
-> **[IMAGEN: foto o captura de las dos computadoras con las VMs encendidas]** (opcional, sirve
-> como evidencia de que cada integrante aporta un nodo).
-
 ---
 
 ## 4. Decisiones tecnológicas
@@ -233,8 +227,6 @@ nuevas: `MONGO_URI`, `REDIS_URL`/`REDIS_SENTINELS`, `REDIS_PASSWORD`, `AMQP_URL`
 - `main-<commit>-<timestamp>`: para que Flux sepa cuál es la más nueva en `dev`.
 - `X.Y.Z` y `X.Y` (semver) cuando se crea un tag `vX.Y.Z`: para `prod`.
 
-> **[IMAGEN: página de "Packages" del repo en GitHub]** con las 3 imágenes y sus tags.
-
 ### Fase 1 – IaC con Terraform
 
 Ruta: `infra/terraform/`.
@@ -266,11 +258,6 @@ node-label: ["store.lab/host-pc=<computadora>"]
 - **dev / prod:** `envs/dev` y `envs/prod`, cada uno con su `terraform.tfvars` y su workspace.
 - **CI:** `terraform fmt`, `validate`, `tflint` y `checkov` (`terraform.yml`).
 - **Alternativa local:** `minikube start --nodes 3` para pruebas de una sola persona.
-
-> **[IMAGEN: salida de `terraform apply`]** terminando con `Apply complete!` y los outputs
-> (`api_endpoint`, `metallb_range`).
-
-> **[IMAGEN: workspace de HCP Terraform]** mostrando el estado y el bloqueo (*state lock*), si lo usaron.
 
 ### Fase 2 – Cargas de trabajo en Kubernetes
 
@@ -319,18 +306,6 @@ flowchart LR
     x[cualquier otro] -. bloqueado .-> api
 ```
 
-> **[IMAGEN: `kubectl get pods -n store-dev -o wide`]** con las réplicas repartidas en los 3 nodos.
-
-> **[IMAGEN: `kubectl -n data get mariadb,maxscale,mongodbcommunity,redisreplication,redissentinel`]**
-> con todos en estado *Ready / Running*.
-
-> **[IMAGEN: la tienda abierta en el navegador]** en `https://dev.tienda.lab` (candado TLS visible
-> y el nombre del pod web en el título).
-
-> **[IMAGEN: prueba de NetworkPolicy]** por ejemplo
-> `kubectl -n store-dev run t --rm -it --image=busybox -- wget -T 3 -qO- http://store-api:8080/healthz`
-> que **falla** (timeout) porque el pod no es de la capa web.
-
 ### Fase 3 – Colas (RabbitMQ)
 
 **Despliegue:** `RabbitmqCluster store-rabbitmq` con 3 réplicas, anti-afinidad por nodo, volúmenes
@@ -378,15 +353,6 @@ pendientes, de 2 a 6).
 
 En Compose se puede probar igual con `docker compose -f docker-compose.yml -f docker-compose.queues.yml up --build`.
 
-> **[IMAGEN: UI de RabbitMQ → Queues]** (`kubectl -n messaging port-forward svc/store-rabbitmq 15672`)
-> con las colas del vhost `dev`, tipo *quorum*.
-
-> **[IMAGEN: respuesta 202 de un POST de reseña]** (`curl -k -i -X POST ...`) con el encabezado
-> `X-Request-Trace` terminando en `rabbitmq (reviews.created)`.
-
-> **[IMAGEN: `kubectl -n store-dev get scaledobject,hpa`]** durante la prueba de backlog
-> mostrando más réplicas del worker.
-
 ### Fase 4 – CI/CD con GitHub Actions
 
 | Workflow | Cuándo | Qué hace |
@@ -399,12 +365,6 @@ En Compose se puede probar igual con `docker compose -f docker-compose.yml -f do
 - **Sin credenciales de larga duración:** GHCR usa el `GITHUB_TOKEN` del workflow y cosign usa el
   token **OIDC** de GitHub (no hay llaves de firma guardadas).
 - **Actualización del tag en GitOps:** la hace **Flux image automation** (fase 5), no el workflow.
-
-> **[IMAGEN: pestaña Actions]** con `ci` y `release` en verde.
-
-> **[IMAGEN: detalle de un job de Trivy]** con la tabla de vulnerabilidades (o "0 vulnerabilities").
-
-> **[IMAGEN: verificación de firma]** `cosign verify ghcr.io/carlosdanielqueperez/store-api:<tag> --certificate-identity-regexp '.*release.yml.*' --certificate-oidc-issuer https://token.actions.githubusercontent.com`
 
 ### Fase 5 – GitOps con FluxCD
 
@@ -434,16 +394,6 @@ En Compose se puede probar igual con `docker compose -f docker-compose.yml -f do
    Secrets y los cifra; Flux los descifra con la llave que Terraform guardó en `flux-system/sops-age`.
 7. **Notificaciones:** `Provider` de tipo `github` + `Alert`: cada reconciliación aparece como
    *commit status* en GitHub (opcional: Slack).
-
-> **[IMAGEN: `flux get kustomizations`]** con todas en `Ready True`.
-
-> **[IMAGEN: `flux get images all -A`]** mostrando las políticas y el último tag elegido.
-
-> **[IMAGEN: commit de `fluxcdbot`]** en el historial ("chore(dev): actualizar imágenes").
-
-> **[IMAGEN: commit status de Flux en GitHub]** (palomita junto al commit con el nombre de la Kustomization).
-
-> **[IMAGEN: archivo `deploy/secrets/*.sops.yaml` en GitHub]** donde se ve que los valores están cifrados (`ENC[AES256_GCM,...]`).
 
 ### Fase 6 – Observabilidad (OpenTelemetry + LGTM)
 
@@ -486,16 +436,6 @@ clúster: HTTPS de la tienda (dev y prod), `/api/readyz`, vencimiento del certif
 el puerto 6443 del API de Kubernetes en cada nodo. Se portaron las revisiones de
 `nagios/architecture.cfg` que siguen teniendo sentido y no se duplican las alertas internas.
 
-> **[IMAGEN: dashboard "Tienda distribuida — K3s"]** en Grafana (`https://grafana.tienda.lab`) durante una prueba de carga.
-
-> **[IMAGEN: traza en Tempo]** de un POST de reseña: `store-browser` → `store-web` → `store-api` → `publish reviews.created` → `store-worker` → `mongodb insert`.
-
-> **[IMAGEN: Loki]** logs de `store-api` filtrados por `trace_id`.
-
-> **[IMAGEN: Grafana → Alerting]** con las reglas de la carpeta "Tienda" (y alguna en estado *Firing* durante la prueba de DLQ o de pérdida de nodo).
-
-> **[IMAGEN: Nagios externo]** (`http://localhost:8089`) con los servicios en OK.
-
 ### Fase 7 – Seguridad
 
 | Control | Implementación |
@@ -514,21 +454,6 @@ el puerto 6443 del API de Kubernetes en cada nodo. Se portaron las revisiones de
 | Cadena de suministro | Trivy en CI, firma cosign y **Kyverno** que rechaza pods de `store-*` cuyas imágenes no estén firmadas por `release.yml` de este repo; además prohíbe `:latest`, exige requests/limits y rootfs de solo lectura. Dependabot. |
 | Alertas Wazuh | integración con Slack del manager (bloque `<integration>`, nivel ≥ 10): se activa con `SLACK_WEBHOOK_URL=... ./scripts/install-wazuh.sh`. Las alertas de la plataforma (Grafana) pueden ir al mismo canal con un *contact point* de Slack. |
 
-> **[IMAGEN: dashboard de Wazuh → Agents]** con los 3 agentes `k3s-<nodo>` activos.
-
-> **[IMAGEN: alerta de FIM en Wazuh]** después de modificar un archivo vigilado, por ejemplo
-> `sudo touch /etc/rancher/k3s/prueba-fim` en un nodo.
-
-> **[IMAGEN: Kyverno bloqueando una imagen sin firma]**
-> `kubectl -n store-dev run x --image=nginx:1.29` → `admission webhook ... denied the request`.
-
-> **[IMAGEN: PSA bloqueando un pod privilegiado]**
-> `kubectl -n store-dev run p --image=busybox --privileged` → `violates PodSecurity "restricted"`.
-
-> **[IMAGEN: resumen de kube-bench]** (`== Summary total ==` con PASS/FAIL/WARN).
-
-> **[IMAGEN: certificado TLS]** en el navegador emitido por `store-lab-root-ca`.
-
 ### Fase 8 – Corte y validación
 
 1. **Compose y K3s en paralelo con corte gradual:** `cutover/haproxy-cutover.cfg` reparte el tráfico
@@ -545,9 +470,6 @@ el puerto 6443 del API de Kubernetes en cada nodo. Se portaron las revisiones de
    Compose como entorno de desarrollo.
 
 Resultados: [`PRUEBAS-DESEMPENO.md`](./PRUEBAS-DESEMPENO.md).
-
-> **[IMAGEN: corte gradual]** respuestas con `X-Backend: compose` y `X-Backend: k3s` al 50/50
-> (`for i in $(seq 20); do curl -sI http://localhost:8080/api/products/cheapest | grep X-Backend; done`).
 
 ---
 
@@ -697,12 +619,12 @@ Contraseñas de Grafana y de los endpoints de administración: `secrets.local.tx
 | 5 | Drift y rollback | Hecho | `prune`, runbook `rollback.md` |
 | 5 | Secretos SOPS | Hecho | `deploy/secrets`, `scripts/create-secrets.sh` |
 | 5 | Notificaciones | Hecho | `clusters/lab/notifications.yaml` |
-| 6 | Stack LGTM vía Flux, Collector | Hecho (ver sección 4, ajuste 1) | `platform/observability` |
+| 6 | Stack LGTM vía Flux, Collector | Hecho | `platform/observability` |
 | 6 | OTel en Node.js, Nginx y navegador | Hecho | `tracing.js`, `web/k8s/`, `web/otel-browser/` |
 | 6 | Collector DaemonSet + gateway con `k8sattributes` | Hecho | `otel-collectors.yaml` |
 | 6 | Dashboards y alertas; SLOs con burn rate | Hecho | `observability/dashboards/` |
 | 6 | Nagios externo | Hecho | `nagios/k8s-external/` |
-| 7 | Wazuh + agentes DaemonSet | Hecho (ver sección 4, ajuste 2) | `scripts/install-wazuh.sh`, `platform/wazuh` |
+| 7 | Wazuh + agentes DaemonSet | Hecho | `scripts/install-wazuh.sh`, `platform/wazuh` |
 | 7 | FIM, vulnerabilidades, rootcheck, audit log | Hecho | `ossec-agent.conf`, Terraform (audit) |
 | 7 | Alertas de Wazuh a Slack | Hecho | `scripts/install-wazuh.sh` (`SLACK_WEBHOOK_URL`) |
 | 7 | PSA restricted, non-root, rootfs RO, RBAC, kube-bench | Hecho | `platform/base/namespaces.yaml`, `deploy/base` |
