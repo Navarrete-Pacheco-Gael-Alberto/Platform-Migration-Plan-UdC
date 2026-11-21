@@ -66,18 +66,21 @@ la API detecta si hay RabbitMQ y, si no, funciona igual que antes).
 
 ### 2.3 Qué cambió en cada capa
 
-| Capa | Antes (Compose) | Ahora (K3s) |
+| Capa | Antes (Compose) | Después (K3s) |
 |---|---|---|
-| Entrada | `presentation-entry` + 2 HAProxy + Keepalived (VIP solo dentro de Docker) | MetalLB (VIP en la LAN real) + Traefik Ingress con TLS |
-| Presentación | `web1..3` fijos | Deployment `store-web` (3–6 réplicas, HPA) |
-| Balanceo a la API | 2 HAProxy + Keepalived | `Service` de Kubernetes (kube-proxy) |
-| Aplicación | `app1..3` fijos | Deployment `store-api` (3–8 réplicas, HPA) |
-| Procesamiento asíncrono | — | RabbitMQ (3 nodos) + Deployment `store-worker` (KEDA) |
-| MariaDB | 3 Galera + `db-lb` HAProxy | MariaDB Operator: Galera 3 nodos + MaxScale (2) |
-| MongoDB | replica set manual (`mongo-init`) | MongoDB Controllers for Kubernetes (`MongoDBCommunity`) |
-| Redis | 2 nodos + 3 Sentinel manuales | Redis Operator: `RedisReplication` (3) + `RedisSentinel` (3) |
-| Monitoreo | Nagios dentro del stack | OTel + LGTM dentro; Nagios afuera (caja negra) |
-| Despliegue | `docker compose up` a mano | Git → Actions → GHCR → Flux |
+| Entrada | `presentation-entry` (HAProxy en el puerto 80 del equipo), punto único de falla | Traefik (2 réplicas, HTTPS 443) en la IP virtual de MetalLB `192.168.1.240` |
+| Balanceo a la web | `presentation-lb-master`/`backup` con Keepalived, IP `172.30.0.250` | Traefik reparte entre los pods web listos |
+| Presentación | `web1..3` fijos | Deployment `store-web` (3–6 réplicas, HPA, PDB, uno por nodo) |
+| Balanceo a la API | `application-lb-master`/`backup` con Keepalived, IP `172.31.0.250` | Service `store-api` (kube-proxy), solo pods listos (`/readyz`) |
+| Aplicación | `app1..3` fijos (Node.js :8080) | Deployment `store-api` (3–8 réplicas, HPA, PDB) |
+| Procesamiento asíncrono | No existía (reseñas síncronas a MongoDB) | RabbitMQ ×3 (colas quorum) + Deployment `store-worker` (KEDA 2–6) |
+| Proxy de MariaDB | `db-lb` (HAProxy TCP :3306/:3307), punto único de falla | MaxScale ×2 con `readwritesplit` y failover automático |
+| MariaDB | Galera de 3 nodos; escritura fija en `galera1` | Galera de 3 nodos (MariaDB Operator); primario elegido por MaxScale |
+| MongoDB | `rs0` armado a mano (`mongo-init`), `mongodb` con prioridad 2 | `MongoDBCommunity` de 3 miembros (operador), usuarios separados para la API y el worker |
+| Redis | `redis` + `redis2` y 3 Sentinels configurados a mano | Redis Operator: `RedisReplication` (1 + 2 réplicas) + `RedisSentinel` (3), con contraseña |
+| Monitoreo | Nagios :8088 y `estado.py` :8090 dentro del mismo host | OpenTelemetry + Grafana LGTM dentro del clúster; Nagios externo :8089 |
+| Despliegue | `docker compose up` a mano | Git > GitHub Actions > GHCR > FluxCD |
+| Dónde corre | Una sola computadora | 3 nodos K3s en 2 computadoras |
 
 ---
 
@@ -92,7 +95,7 @@ integrantes usamos **3 servidores K3s** (etcd necesita un número impar para ten
 | `k3s-2` | PC de Diego | 192.168.1.102 | 2 / 6 GB | server |
 | `k3s-3` | PC de Daniel | 192.168.1.103 | 2 / 6 GB | server |
 
-> ✏️ CAMBIAR la tabla con sus IPs, recursos y nombres reales.
+> **CAMBIAR:** la tabla con sus IPs, recursos y nombres reales.
 
 - Cada nodo es una **VM Ubuntu 24.04 con red en modo puente** (Multipass, Hyper-V o VirtualBox),
   así todas las VMs están en la misma LAN que las computadoras. **No** usamos WSL2 como nodo: está
@@ -123,10 +126,10 @@ flowchart TB
     vip -.-> v1 & v2 & v3
 ```
 
->**[IMAGEN: `kubectl get nodes -o wide -L store.lab/host-pc`]** mostrando los 3 nodos `Ready`,
+> **[IMAGEN: `kubectl get nodes -o wide -L store.lab/host-pc`]** mostrando los 3 nodos `Ready`,
 > sus IPs y en qué computadora está cada uno.
 
->**[IMAGEN: foto o captura de las dos computadoras con las VMs encendidas]** (opcional, sirve
+> **[IMAGEN: foto o captura de las dos computadoras con las VMs encendidas]** (opcional, sirve
 > como evidencia de que cada integrante aporta un nodo).
 
 ---
@@ -230,7 +233,7 @@ nuevas: `MONGO_URI`, `REDIS_URL`/`REDIS_SENTINELS`, `REDIS_PASSWORD`, `AMQP_URL`
 - `main-<commit>-<timestamp>`: para que Flux sepa cuál es la más nueva en `dev`.
 - `X.Y.Z` y `X.Y` (semver) cuando se crea un tag `vX.Y.Z`: para `prod`.
 
->**[IMAGEN: página de "Packages" del repo en GitHub]** con las 3 imágenes y sus tags.
+> **[IMAGEN: página de "Packages" del repo en GitHub]** con las 3 imágenes y sus tags.
 
 ### Fase 1 – IaC con Terraform
 
@@ -264,10 +267,10 @@ node-label: ["store.lab/host-pc=<computadora>"]
 - **CI:** `terraform fmt`, `validate`, `tflint` y `checkov` (`terraform.yml`).
 - **Alternativa local:** `minikube start --nodes 3` para pruebas de una sola persona.
 
-> 📷 **[IMAGEN: salida de `terraform apply`]** terminando con `Apply complete!` y los outputs
+> **[IMAGEN: salida de `terraform apply`]** terminando con `Apply complete!` y los outputs
 > (`api_endpoint`, `metallb_range`).
 
-> 📷 **[IMAGEN: workspace de HCP Terraform]** mostrando el estado y el bloqueo (*state lock*), si lo usaron.
+> **[IMAGEN: workspace de HCP Terraform]** mostrando el estado y el bloqueo (*state lock*), si lo usaron.
 
 ### Fase 2 – Cargas de trabajo en Kubernetes
 
@@ -316,15 +319,15 @@ flowchart LR
     x[cualquier otro] -. bloqueado .-> api
 ```
 
-> 📷 **[IMAGEN: `kubectl get pods -n store-dev -o wide`]** con las réplicas repartidas en los 3 nodos.
+> **[IMAGEN: `kubectl get pods -n store-dev -o wide`]** con las réplicas repartidas en los 3 nodos.
 
-> 📷 **[IMAGEN: `kubectl -n data get mariadb,maxscale,mongodbcommunity,redisreplication,redissentinel`]**
+> **[IMAGEN: `kubectl -n data get mariadb,maxscale,mongodbcommunity,redisreplication,redissentinel`]**
 > con todos en estado *Ready / Running*.
 
-> 📷 **[IMAGEN: la tienda abierta en el navegador]** en `https://dev.tienda.lab` (candado TLS visible
+> **[IMAGEN: la tienda abierta en el navegador]** en `https://dev.tienda.lab` (candado TLS visible
 > y el nombre del pod web en el título).
 
-> 📷 **[IMAGEN: prueba de NetworkPolicy]** por ejemplo
+> **[IMAGEN: prueba de NetworkPolicy]** por ejemplo
 > `kubectl -n store-dev run t --rm -it --image=busybox -- wget -T 3 -qO- http://store-api:8080/healthz`
 > que **falla** (timeout) porque el pod no es de la capa web.
 
@@ -375,13 +378,13 @@ pendientes, de 2 a 6).
 
 En Compose se puede probar igual con `docker compose -f docker-compose.yml -f docker-compose.queues.yml up --build`.
 
-> 📷 **[IMAGEN: UI de RabbitMQ → Queues]** (`kubectl -n messaging port-forward svc/store-rabbitmq 15672`)
+> **[IMAGEN: UI de RabbitMQ → Queues]** (`kubectl -n messaging port-forward svc/store-rabbitmq 15672`)
 > con las colas del vhost `dev`, tipo *quorum*.
 
-> 📷 **[IMAGEN: respuesta 202 de un POST de reseña]** (`curl -k -i -X POST ...`) con el encabezado
+> **[IMAGEN: respuesta 202 de un POST de reseña]** (`curl -k -i -X POST ...`) con el encabezado
 > `X-Request-Trace` terminando en `rabbitmq (reviews.created)`.
 
-> 📷 **[IMAGEN: `kubectl -n store-dev get scaledobject,hpa`]** durante la prueba de backlog
+> **[IMAGEN: `kubectl -n store-dev get scaledobject,hpa`]** durante la prueba de backlog
 > mostrando más réplicas del worker.
 
 ### Fase 4 – CI/CD con GitHub Actions
@@ -397,11 +400,11 @@ En Compose se puede probar igual con `docker compose -f docker-compose.yml -f do
   token **OIDC** de GitHub (no hay llaves de firma guardadas).
 - **Actualización del tag en GitOps:** la hace **Flux image automation** (fase 5), no el workflow.
 
-> 📷 **[IMAGEN: pestaña Actions]** con `ci` y `release` en verde.
+> **[IMAGEN: pestaña Actions]** con `ci` y `release` en verde.
 
-> 📷 **[IMAGEN: detalle de un job de Trivy]** con la tabla de vulnerabilidades (o "0 vulnerabilities").
+> **[IMAGEN: detalle de un job de Trivy]** con la tabla de vulnerabilidades (o "0 vulnerabilities").
 
-> 📷 **[IMAGEN: verificación de firma]** `cosign verify ghcr.io/carlosdanielqueperez/store-api:<tag> --certificate-identity-regexp '.*release.yml.*' --certificate-oidc-issuer https://token.actions.githubusercontent.com`
+> **[IMAGEN: verificación de firma]** `cosign verify ghcr.io/carlosdanielqueperez/store-api:<tag> --certificate-identity-regexp '.*release.yml.*' --certificate-oidc-issuer https://token.actions.githubusercontent.com`
 
 ### Fase 5 – GitOps con FluxCD
 
@@ -432,15 +435,15 @@ En Compose se puede probar igual con `docker compose -f docker-compose.yml -f do
 7. **Notificaciones:** `Provider` de tipo `github` + `Alert`: cada reconciliación aparece como
    *commit status* en GitHub (opcional: Slack).
 
-> 📷 **[IMAGEN: `flux get kustomizations`]** con todas en `Ready True`.
+> **[IMAGEN: `flux get kustomizations`]** con todas en `Ready True`.
 
-> 📷 **[IMAGEN: `flux get images all -A`]** mostrando las políticas y el último tag elegido.
+> **[IMAGEN: `flux get images all -A`]** mostrando las políticas y el último tag elegido.
 
-> 📷 **[IMAGEN: commit de `fluxcdbot`]** en el historial ("chore(dev): actualizar imágenes").
+> **[IMAGEN: commit de `fluxcdbot`]** en el historial ("chore(dev): actualizar imágenes").
 
-> 📷 **[IMAGEN: commit status de Flux en GitHub]** (palomita junto al commit con el nombre de la Kustomization).
+> **[IMAGEN: commit status de Flux en GitHub]** (palomita junto al commit con el nombre de la Kustomization).
 
-> 📷 **[IMAGEN: archivo `deploy/secrets/*.sops.yaml` en GitHub]** donde se ve que los valores están cifrados (`ENC[AES256_GCM,...]`).
+> **[IMAGEN: archivo `deploy/secrets/*.sops.yaml` en GitHub]** donde se ve que los valores están cifrados (`ENC[AES256_GCM,...]`).
 
 ### Fase 6 – Observabilidad (OpenTelemetry + LGTM)
 
@@ -483,15 +486,15 @@ clúster: HTTPS de la tienda (dev y prod), `/api/readyz`, vencimiento del certif
 el puerto 6443 del API de Kubernetes en cada nodo. Se portaron las revisiones de
 `nagios/architecture.cfg` que siguen teniendo sentido y no se duplican las alertas internas.
 
-> 📷 **[IMAGEN: dashboard "Tienda distribuida — K3s"]** en Grafana (`https://grafana.tienda.lab`) durante una prueba de carga.
+> **[IMAGEN: dashboard "Tienda distribuida — K3s"]** en Grafana (`https://grafana.tienda.lab`) durante una prueba de carga.
 
-> 📷 **[IMAGEN: traza en Tempo]** de un POST de reseña: `store-browser` → `store-web` → `store-api` → `publish reviews.created` → `store-worker` → `mongodb insert`.
+> **[IMAGEN: traza en Tempo]** de un POST de reseña: `store-browser` → `store-web` → `store-api` → `publish reviews.created` → `store-worker` → `mongodb insert`.
 
-> 📷 **[IMAGEN: Loki]** logs de `store-api` filtrados por `trace_id`.
+> **[IMAGEN: Loki]** logs de `store-api` filtrados por `trace_id`.
 
-> 📷 **[IMAGEN: Grafana → Alerting]** con las reglas de la carpeta "Tienda" (y alguna en estado *Firing* durante la prueba de DLQ o de pérdida de nodo).
+> **[IMAGEN: Grafana → Alerting]** con las reglas de la carpeta "Tienda" (y alguna en estado *Firing* durante la prueba de DLQ o de pérdida de nodo).
 
-> 📷 **[IMAGEN: Nagios externo]** (`http://localhost:8089`) con los servicios en OK.
+> **[IMAGEN: Nagios externo]** (`http://localhost:8089`) con los servicios en OK.
 
 ### Fase 7 – Seguridad
 
@@ -511,20 +514,20 @@ el puerto 6443 del API de Kubernetes en cada nodo. Se portaron las revisiones de
 | Cadena de suministro | Trivy en CI, firma cosign y **Kyverno** que rechaza pods de `store-*` cuyas imágenes no estén firmadas por `release.yml` de este repo; además prohíbe `:latest`, exige requests/limits y rootfs de solo lectura. Dependabot. |
 | Alertas Wazuh | integración con Slack del manager (bloque `<integration>`, nivel ≥ 10): se activa con `SLACK_WEBHOOK_URL=... ./scripts/install-wazuh.sh`. Las alertas de la plataforma (Grafana) pueden ir al mismo canal con un *contact point* de Slack. |
 
-> 📷 **[IMAGEN: dashboard de Wazuh → Agents]** con los 3 agentes `k3s-<nodo>` activos.
+> **[IMAGEN: dashboard de Wazuh → Agents]** con los 3 agentes `k3s-<nodo>` activos.
 
-> 📷 **[IMAGEN: alerta de FIM en Wazuh]** después de modificar un archivo vigilado, por ejemplo
+> **[IMAGEN: alerta de FIM en Wazuh]** después de modificar un archivo vigilado, por ejemplo
 > `sudo touch /etc/rancher/k3s/prueba-fim` en un nodo.
 
-> 📷 **[IMAGEN: Kyverno bloqueando una imagen sin firma]**
+> **[IMAGEN: Kyverno bloqueando una imagen sin firma]**
 > `kubectl -n store-dev run x --image=nginx:1.29` → `admission webhook ... denied the request`.
 
-> 📷 **[IMAGEN: PSA bloqueando un pod privilegiado]**
+> **[IMAGEN: PSA bloqueando un pod privilegiado]**
 > `kubectl -n store-dev run p --image=busybox --privileged` → `violates PodSecurity "restricted"`.
 
-> 📷 **[IMAGEN: resumen de kube-bench]** (`== Summary total ==` con PASS/FAIL/WARN).
+> **[IMAGEN: resumen de kube-bench]** (`== Summary total ==` con PASS/FAIL/WARN).
 
-> 📷 **[IMAGEN: certificado TLS]** en el navegador emitido por `store-lab-root-ca`.
+> **[IMAGEN: certificado TLS]** en el navegador emitido por `store-lab-root-ca`.
 
 ### Fase 8 – Corte y validación
 
@@ -543,7 +546,7 @@ el puerto 6443 del API de Kubernetes en cada nodo. Se portaron las revisiones de
 
 Resultados: [`PRUEBAS-DESEMPENO.md`](./PRUEBAS-DESEMPENO.md).
 
-> 📷 **[IMAGEN: corte gradual]** respuestas con `X-Backend: compose` y `X-Backend: k3s` al 50/50
+> **[IMAGEN: corte gradual]** respuestas con `X-Backend: compose` y `X-Backend: k3s` al 50/50
 > (`for i in $(seq 20); do curl -sI http://localhost:8080/api/products/cheapest | grep X-Backend; done`).
 
 ---
@@ -668,48 +671,47 @@ Contraseñas de Grafana y de los endpoints de administración: `secrets.local.tx
 
 | Fase | Punto | Estado | Dónde |
 |---|---|---|---|
-| 0 | Imágenes versionadas, sin root y mínimas; `/healthz` y `/readyz` | ✅ | `application/`, `worker/`, `web/Dockerfile` |
-| 0 | Configuración 12-factor | ✅ | `application/config.js` |
-| 0 | Registro GHCR, tags `sha-<commit>` + semver | ✅ | `release.yml` |
-| 1 | Módulos `network`, `k3s-nodes`, `flux-bootstrap`, `storage` | ✅ | `infra/terraform/modules` |
-| 1 | 3 servidores K3s con etcd HA | ✅ | `k3s-nodes` |
-| 1 | Estado remoto con bloqueo; dev/prod | ✅ | `backend.tf`, `envs/` |
-| 1 | Bootstrap de Flux con el provider de Terraform | ✅ | `flux-bootstrap` |
-| 1 | fmt, validate, tflint, checkov en CI | ✅ | `terraform.yml` |
-| 2 | Kustomize base + overlays dev/prod | ✅ | `deploy/` |
-| 2 | Service/Ingress (Traefik) + MetalLB en lugar de HAProxy/Keepalived | ✅ | `operators-config/`, `base/common/ingress.yaml` |
-| 2 | requests/limits, probes, HPA, PDB, topology spread | ✅ | `deploy/base` |
-| 2 | Operadores: MariaDB (Galera + MaxScale), MongoDB, Redis, RabbitMQ | ✅ | `platform/operators`, `platform/data` |
-| 2 | NetworkPolicies default-deny | ✅ | `base/common/networkpolicies.yaml`, `data/`, `rabbitmq/` |
-| 3 | RabbitMQ 3 réplicas, quorum, PV | ✅ | `platform/rabbitmq` |
-| 3 | Worker + publicador en la API | ✅ | `worker/`, `application/index.js` |
-| 3 | Exchanges, colas, DLQ y esquemas en Git | ✅ | `topology.js`, `rabbitmq/topology/` |
-| 3 | Alertas de profundidad, lag y DLQ | ✅ | `observability/dashboards/alert-rules.json` |
-| 3 | Autoescalado por profundidad (KEDA) | ✅ | `base/worker/worker.yaml` |
-| 4 | `ci.yml`: lint, tests, build, Trivy, validate, kubeconform | ✅ | `.github/workflows/ci.yml` |
-| 4 | `release.yml`: GHCR, cosign, SBOM, tag vía Flux | ✅ | `.github/workflows/release.yml` |
-| 4 | OIDC, sin credenciales de larga duración | ✅ | `GITHUB_TOKEN` + cosign keyless |
-| 4 | `plan` en PR, `apply` en main con aprobación | ✅ | `terraform.yml` (runner self-hosted) |
-| 5 | Bootstrap, promoción, image automation, dependsOn | ✅ | `clusters/lab/` |
-| 5 | Drift y rollback | ✅ | `prune`, runbook `rollback.md` |
-| 5 | Secretos SOPS | ✅ | `deploy/secrets`, `scripts/create-secrets.sh` |
-| 5 | Notificaciones | ✅ | `clusters/lab/notifications.yaml` |
-| 6 | Stack LGTM vía Flux, Collector | ✅ | `platform/observability` |
-| 6 | OTel en Node.js, Nginx y navegador | ✅ | `tracing.js`, `web/k8s/`, `web/otel-browser/` |
-| 6 | Collector DaemonSet + gateway con `k8sattributes` | ✅ | `otel-collectors.yaml` |
-| 6 | Dashboards y alertas; SLOs con burn rate | ✅ | `observability/dashboards/` |
-| 6 | Nagios externo | ✅ | `nagios/k8s-external/` |
-| 7 | Wazuh + agentes DaemonSet | ✅ | `scripts/install-wazuh.sh`, `platform/wazuh` |
-| 7 | FIM, vulnerabilidades, rootcheck, audit log | ✅ | `ossec-agent.conf`, Terraform (audit) |
-| 7 | Alertas de Wazuh a Slack | ✅ | `scripts/install-wazuh.sh` (`SLACK_WEBHOOK_URL`) |
-| 7 | PSA restricted, non-root, rootfs RO, RBAC, kube-bench | ✅ | `platform/base/namespaces.yaml`, `deploy/base` |
-| 7 | TLS con cert-manager; mTLS opcional | ✅ | `operators-config/cluster-issuers.yaml` |
-| 7 | Usuarios de mínimo privilegio, secretos | ✅ | `data/`, `rabbitmq/topology/` |
-| 7 | Autenticación y rate limiting | ✅ | Middlewares de Traefik |
-| 7 | Trivy, cosign + Kyverno, Dependabot | ✅ | `ci.yml`, `security/`, `dependabot.yml` |
-| 8 | Compose y K3s en paralelo, corte gradual | ✅ | `cutover/` |
-| 8 | Caos en Kubernetes y SLOs | ✅ | `pruebas-k8s/chaos/` |
-| 8 | Respaldos y restauración | ✅ | `platform/backups/`, runbook |
-| 8 | Runbooks | ✅ | `docs/runbooks/` |
-| 8 | Quitar HAProxy/Keepalived del camino de producción | ✅ | no existen en K3s |
-
+| 0 | Imágenes versionadas, sin root y mínimas; `/healthz` y `/readyz` | Hecho | `application/`, `worker/`, `web/Dockerfile` |
+| 0 | Configuración 12-factor | Hecho | `application/config.js` |
+| 0 | Registro GHCR, tags `sha-<commit>` + semver | Hecho | `release.yml` |
+| 1 | Módulos `network`, `k3s-nodes`, `flux-bootstrap`, `storage` | Hecho | `infra/terraform/modules` |
+| 1 | 3 servidores K3s con etcd HA | Hecho | `k3s-nodes` |
+| 1 | Estado remoto con bloqueo; dev/prod | Hecho | `backend.tf`, `envs/` |
+| 1 | Bootstrap de Flux con el provider de Terraform | Hecho | `flux-bootstrap` |
+| 1 | fmt, validate, tflint, checkov en CI | Hecho | `terraform.yml` |
+| 2 | Kustomize base + overlays dev/prod | Hecho | `deploy/` |
+| 2 | Service/Ingress (Traefik) + MetalLB en lugar de HAProxy/Keepalived | Hecho | `operators-config/`, `base/common/ingress.yaml` |
+| 2 | requests/limits, probes, HPA, PDB, topology spread | Hecho | `deploy/base` |
+| 2 | Operadores: MariaDB (Galera + MaxScale), MongoDB, Redis, RabbitMQ | Hecho | `platform/operators`, `platform/data` |
+| 2 | NetworkPolicies default-deny | Hecho | `base/common/networkpolicies.yaml`, `data/`, `rabbitmq/` |
+| 3 | RabbitMQ 3 réplicas, quorum, PV | Hecho | `platform/rabbitmq` |
+| 3 | Worker + publicador en la API | Hecho | `worker/`, `application/index.js` |
+| 3 | Exchanges, colas, DLQ y esquemas en Git | Hecho | `topology.js`, `rabbitmq/topology/` |
+| 3 | Alertas de profundidad, lag y DLQ | Hecho | `observability/dashboards/alert-rules.json` |
+| 3 | Autoescalado por profundidad (KEDA) | Hecho | `base/worker/worker.yaml` |
+| 4 | `ci.yml`: lint, tests, build, Trivy, validate, kubeconform | Hecho | `.github/workflows/ci.yml` |
+| 4 | `release.yml`: GHCR, cosign, SBOM, tag vía Flux | Hecho | `.github/workflows/release.yml` |
+| 4 | OIDC, sin credenciales de larga duración | Hecho | `GITHUB_TOKEN` + cosign keyless |
+| 4 | `plan` en PR, `apply` en main con aprobación | Hecho | `terraform.yml` (runner self-hosted) |
+| 5 | Bootstrap, promoción, image automation, dependsOn | Hecho | `clusters/lab/` |
+| 5 | Drift y rollback | Hecho | `prune`, runbook `rollback.md` |
+| 5 | Secretos SOPS | Hecho | `deploy/secrets`, `scripts/create-secrets.sh` |
+| 5 | Notificaciones | Hecho | `clusters/lab/notifications.yaml` |
+| 6 | Stack LGTM vía Flux, Collector | Hecho (ver sección 4, ajuste 1) | `platform/observability` |
+| 6 | OTel en Node.js, Nginx y navegador | Hecho | `tracing.js`, `web/k8s/`, `web/otel-browser/` |
+| 6 | Collector DaemonSet + gateway con `k8sattributes` | Hecho | `otel-collectors.yaml` |
+| 6 | Dashboards y alertas; SLOs con burn rate | Hecho | `observability/dashboards/` |
+| 6 | Nagios externo | Hecho | `nagios/k8s-external/` |
+| 7 | Wazuh + agentes DaemonSet | Hecho (ver sección 4, ajuste 2) | `scripts/install-wazuh.sh`, `platform/wazuh` |
+| 7 | FIM, vulnerabilidades, rootcheck, audit log | Hecho | `ossec-agent.conf`, Terraform (audit) |
+| 7 | Alertas de Wazuh a Slack | Hecho | `scripts/install-wazuh.sh` (`SLACK_WEBHOOK_URL`) |
+| 7 | PSA restricted, non-root, rootfs RO, RBAC, kube-bench | Hecho | `platform/base/namespaces.yaml`, `deploy/base` |
+| 7 | TLS con cert-manager; mTLS opcional | Hecho (mTLS opcional, no implementado) | `operators-config/cluster-issuers.yaml` |
+| 7 | Usuarios de mínimo privilegio, secretos | Hecho | `data/`, `rabbitmq/topology/` |
+| 7 | Autenticación y rate limiting | Hecho | Middlewares de Traefik |
+| 7 | Trivy, cosign + Kyverno, Dependabot | Hecho | `ci.yml`, `security/`, `dependabot.yml` |
+| 8 | Compose y K3s en paralelo, corte gradual | Hecho | `cutover/` |
+| 8 | Caos en Kubernetes y SLOs | Hecho | `pruebas-k8s/chaos/` |
+| 8 | Respaldos y restauración | Hecho | `platform/backups/`, runbook |
+| 8 | Runbooks | Hecho | `docs/runbooks/` |
+| 8 | Quitar HAProxy/Keepalived del camino de producción | Hecho | no existen en K3s |
