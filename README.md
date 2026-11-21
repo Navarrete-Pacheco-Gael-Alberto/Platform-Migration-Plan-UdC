@@ -5,8 +5,8 @@ Implementación del plan [`PLATFORM-MIGRATION-PLAN.md`](https://github.com/tuxtt
 
 | | |
 |---|---|
-| Equipo | Carlos Daniel Que Pérez (230300777) · Diego Murgia Rosaldo (CAMBIAR-matrícula) |
-| Profesor | CAMBIAR-nombre del profesor |
+| Equipo | Carlos Daniel Que Pérez (230300777) · Gael Alberto Navarrete Pacheco (230300764) |
+| Profesor | Ismael Jiménez Sánchez |
 | Repositorio | https://github.com/CarlosDanielQuePerez/Distributed-three-tier-store-demo |
 | Fecha de entrega | 30/11/2026 |
 
