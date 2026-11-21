@@ -59,10 +59,10 @@ la API detecta si hay RabbitMQ y, si no, funciona igual que antes).
 ## 2. Arquitectura antes y después
 
 ### 2.1 Antes
-![Inicial](arquitectura-final-antes.png)
+![Inicial](application/arquitectura-final-antes.png)
 
 ### 2.2 Después (K3s en 3 nodos)
-![Despues](arquitectura-final-despues.png)
+![Despues](application/arquitectura-final-despues.png)
 
 ### 2.3 Qué cambió en cada capa
 
