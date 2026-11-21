@@ -25,8 +25,7 @@ Implementación del plan [`PLATFORM-MIGRATION-PLAN.md`](https://github.com/tuxtt
 9. [Limitaciones y trabajo futuro](#9-limitaciones-y-trabajo-futuro)
 10. [Lista de verificación del plan](#10-lista-de-verificación-del-plan)
 
-Las pruebas de desempeño están en [`PRUEBAS-DESEMPENO.md`](./PRUEBAS-DESEMPENO.md) y los
-procedimientos de operación en [`runbooks/`](./runbooks/).
+Las pruebas de desempeño están en [`PRUEBAS-DESEMPENO.md`](./PRUEBAS-DESEMPENO.md)
 
 ---
 
