@@ -468,9 +468,6 @@ el puerto 6443 del API de Kubernetes en cada nodo. Se portaron las revisiones de
    `security-incident`, `backup-restore`.
 5. **HAProxy/Keepalived fuera del camino de producción:** en K3s ya no existen; siguen solo en
    Compose como entorno de desarrollo.
-
-Resultados: [`PRUEBAS-DESEMPENO.md`](./PRUEBAS-DESEMPENO.md).
-
 ---
 
 ## 7. Guía para reproducir el despliegue
@@ -483,16 +480,13 @@ Resultados: [`PRUEBAS-DESEMPENO.md`](./PRUEBAS-DESEMPENO.md).
 | RAM: ~6 GB libres por VM (la PC de Daniel aloja 2 VMs → ~12 GB libres) | Llave SSH (`ssh-keygen -t ed25519`) |
 | Misma red local que la otra computadora | Cuenta de GitHub con permisos en el repo |
 
-> La red de la universidad suele aislar los equipos entre sí: usen un router propio o el hotspot
-> de un celular. Reserven IPs fijas para las VMs (o configúrenlas estáticas).
-
 ### 7.2 Crear las VMs (una vez por computadora)
 
 ```bash
 # PC de Daniel (dos VMs). En Windows: Multipass con Hyper-V; --network = nombre del adaptador (ver `multipass networks`)
 multipass launch 24.04 --name k3s-1 --cpus 2 --memory 6G --disk 30G --network name=Wi-Fi,mode=auto
 multipass launch 24.04 --name k3s-3 --cpus 2 --memory 6G --disk 30G --network name=Wi-Fi,mode=auto
-# PC de Diego (una VM)
+# PC de Gael (una VM)
 multipass launch 24.04 --name k3s-2 --cpus 2 --memory 6G --disk 30G --network name=Wi-Fi,mode=auto
 
 multipass info k3s-1        # anotar la IP de la LAN (la del adaptador en puente)
