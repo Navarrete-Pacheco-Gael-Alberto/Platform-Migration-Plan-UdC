@@ -58,41 +58,11 @@ la API detecta si hay RabbitMQ y, si no, funciona igual que antes).
 
 ## 2. Arquitectura antes y después
 
-### 2.1 Antes (parcial 1, Docker Compose en un host)
-
->**[IMAGEN: diagrama de la arquitectura del parcial 1]** — usar `application/arquitectura-final.png`.
+### 2.1 Antes
+![Inicial](arquitectura-final-antes.png)
 
 ### 2.2 Después (K3s en 3 nodos)
-
-```mermaid
-flowchart LR
-    gh[GitHub repo] -->|push / PR| gha[GitHub Actions<br/>lint, test, Trivy, build]
-    gha -->|push + cosign + SBOM| reg[(GHCR)]
-    reg -->|tag nuevo| flux
-    tf[Terraform] -->|SSH: instala K3s HA,<br/>StorageClass, bootstrap Flux| k3s
-    flux[FluxCD] -->|reconcilia desde Git| k3s
-    nagios[Nagios externo] -->|HTTPS, TLS, API 6443| ing
-
-    subgraph k3s["Clúster K3s (3 servidores, etcd embebido)"]
-        mlb[MetalLB VIP] --> ing[Traefik Ingress + TLS<br/>rate limit, basic auth]
-        ing --> web[store-web x3<br/>Nginx + ngx_otel]
-        web --> api[store-api x3..8<br/>HPA]
-        api --> redis[(Redis 1+2<br/>+ 3 Sentinel)]
-        api --> mxs[MaxScale x2<br/>readwritesplit] --> galera[(Galera x3)]
-        api -->|publica| mq[[RabbitMQ x3<br/>colas quorum]]
-        mq --> worker[store-worker x2..6<br/>KEDA]
-        worker --> mongo[(MongoDB RS x3)]
-        worker --> redis
-        worker --> mxs
-        web & api & worker -->|OTLP| otel[OTel Collector<br/>agente + gateway]
-        otel --> lgtm[Grafana / Loki / Tempo / Prometheus]
-        wazuha[Wazuh agents<br/>DaemonSet] --> wazuh[Wazuh manager<br/>+ indexer + dashboard]
-        kyv[Kyverno] -.verifica firmas.-> web
-    end
-```
-
->**[IMAGEN: diagrama de la arquitectura nueva]** — exportar el diagrama anterior (o hacerlo en
-> Lucidchart/draw.io) y guardarlo como `docs/img/arquitectura-k3s.png`.
+![Despues](arquitectura-final-despues.png)
 
 ### 2.3 Qué cambió en cada capa
 
