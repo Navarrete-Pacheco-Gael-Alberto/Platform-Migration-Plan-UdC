@@ -363,34 +363,8 @@ En Compose se puede probar igual con `docker compose -f docker-compose.yml -f do
   token **OIDC** de GitHub (no hay llaves de firma guardadas).
 - **Actualización del tag en GitOps:** la hace **Flux image automation** (fase 5), no el workflow.
 
-### Fase 5 – GitOps con FluxCD
-
-1. **Bootstrap del clúster:** Terraform solo instala Flux; `clusters/lab/` tiene los
-   `GitRepository` y `Kustomization` de todo lo demás.
-2. **Promoción de entornos:** `apps-dev` sigue `main`; `apps-prod` sigue la rama `release`.
-   Promover = **PR de `main` a `release` aprobado** + tag `vX.Y.Z` (runbook `deploy.md`).
-3. **Image automation:** `ImageRepository` + `ImagePolicy` (dev: el `main-…-<timestamp>` más nuevo;
-   prod: el semver más alto) + `ImageUpdateAutomation`, que hace commit del tag nuevo en
-   `deploy/overlays/<env>/kustomization.yaml` (marcadores `$imagepolicy`).
-4. **Orden de dependencias** (`dependsOn`):
-
-   ```mermaid
-   flowchart LR
-     pb[platform-base<br/>namespaces, Helm repos] --> op[operators] --> oc[operators-config]
-     pb --> sec[secrets SOPS]
-     oc & sec --> data[data] & msg[messaging]
-     data & msg --> dev[apps-dev] & prod[apps-prod]
-     dev --> obs[observability]
-     data & msg --> bk[backups]
-   ```
-
-5. **Corrección de drift y rollback:** los cambios manuales con `kubectl` se revierten en el
-   siguiente ciclo (`prune: true`); el rollback es `git revert` (runbook `rollback.md`). En `data` y
-   `messaging` `prune` está desactivado para que un error en Git nunca borre una base de datos.
-6. **Secretos:** SOPS con age. `scripts/create-secrets.sh` genera todas las contraseñas, crea los
-   Secrets y los cifra; Flux los descifra con la llave que Terraform guardó en `flux-system/sops-age`.
-7. **Notificaciones:** `Provider` de tipo `github` + `Alert`: cada reconciliación aparece como
-   *commit status* en GitHub (opcional: Slack).
+### Fase 5 – GitOps con FluxCD *(Opcional — No implementada)*
+> **Nota:** De acuerdo con las indicaciones del profesor, esta fase es opcional y no se implementará en este proyecto.
 
 ### Fase 6 – Observabilidad (OpenTelemetry + LGTM)
 
